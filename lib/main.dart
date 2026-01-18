@@ -4,13 +4,15 @@ import "dart:io";
 import "dart:math";
 
 import "package:flutter/material.dart";
+import "package:langchain/langchain.dart";
+import "package:langchain_openai/langchain_openai.dart";
 import "package:main/blog.dart";
 import "package:main/constants.dart";
 import "package:main/model.dart";
+import "package:main/scouter.dart";
 import "package:main/tumblr/api/client.dart";
 import "package:main/ui/checkbox.dart";
 import "package:main/ui/textoutput.dart";
-import "package:ollama_dart/ollama_dart.dart";
 import "package:package_info_plus/package_info_plus.dart";
 import "package:shared_preferences/shared_preferences.dart";
 import "package:url_launcher/url_launcher.dart";
@@ -48,11 +50,16 @@ class _MainPageState extends State<MainPage> {
   var _selectedIndex = 0;
   final Client _tumblrClient;
   var _running = false;
+  var _failed = false;
   var _runningMessage = "";
   final _logController = ExTextOutputController();
+  final Completer<List<String>> _blogs;
+  var _primaryBlog = "";
+  var _postObj = <String, Object>{};
 
   _MainPageState()
-    : _tumblrClient = Client(
+    : _blogs = Completer<List<String>>(),
+      _tumblrClient = Client(
         onAuthWebCall: (authUri) async {
           final (HttpServer server, Completer<String> authCode) =
               await _startLocalServer();
@@ -68,6 +75,32 @@ class _MainPageState extends State<MainPage> {
           });
         },
       );
+
+  @override
+  void initState() {
+    super.initState();
+
+    unawaited(
+      _tumblrClient
+          .get("/user/info")
+          .then(
+            (user) {
+              _blogs.complete(
+                user["user"]["blogs"]
+                    .map((item) => item["name"])
+                    .toList()
+                    .cast<String>(),
+              );
+              _primaryBlog = user["user"]["blogs"].firstWhere(
+                (item) => item["primary"] == true,
+              )["name"];
+            },
+            onError: (err) {
+              _blogs.completeError(err);
+            },
+          ),
+    );
+  }
 
   static Future<(HttpServer, Completer<String>)> _startLocalServer() async {
     final HttpServer server = await HttpServer.bind(
@@ -144,6 +177,11 @@ class _MainPageState extends State<MainPage> {
                               : const Icon(Icons.edit),
                           label: const Text("Compose"),
                         ),
+                        const NavigationRailDestination(
+                          icon: Icon(Icons.search_outlined),
+                          selectedIcon: Icon(Icons.search),
+                          label: Text("Scout"),
+                        ),
                       ],
                     ),
                   ),
@@ -164,8 +202,37 @@ class _MainPageState extends State<MainPage> {
           mainAxisAlignment: MainAxisAlignment.center,
           spacing: 10,
           children: [
+            Opacity(
+              opacity: _running ? 0.5 : 1.0,
+              child: ElevatedButton(
+                onPressed: () {
+                  unawaited(
+                    _publishPost()
+                        .then((_) {
+                          setState(() {
+                            _runningMessage = "✅ Done!";
+                            _running = false;
+                          });
+                        })
+                        .catchError((err) {
+                          setState(() {
+                            _runningMessage = "❌ $err";
+                            _running = false;
+                            _failed = true;
+                          });
+                        }),
+                  );
+
+                  setState(() {
+                    _selectedIndex = 2;
+                    _running = true;
+                  });
+                },
+                child: const Text("📨 Post it!"),
+              ),
+            ),
             Expanded(
-              child: _running
+              child: _running || _failed
                   ? Text(_runningMessage, textAlign: TextAlign.center)
                   : const SizedBox(height: 1),
             ),
@@ -185,6 +252,7 @@ class _MainPageState extends State<MainPage> {
                           setState(() {
                             _runningMessage = "❌ $err";
                             _running = false;
+                            _failed = true;
                           });
                         }),
                   );
@@ -194,7 +262,7 @@ class _MainPageState extends State<MainPage> {
                     _running = true;
                   });
                 },
-                child: const Text("🤖Do it!"),
+                child: const Text("🤖 Do it!"),
               ),
             ),
           ],
@@ -233,6 +301,12 @@ class _MainPageState extends State<MainPage> {
           ],
         );
 
+      case 3:
+        return ScouterWidget(
+          tumblrClient: _tumblrClient,
+          primary: _primaryBlog,
+        );
+
       default:
         return const SizedBox(height: 10);
     }
@@ -264,6 +338,10 @@ class _MainPageState extends State<MainPage> {
       final int tmp = pages[a];
       pages[a] = pages[b];
       pages[b] = tmp;
+    }
+
+    if (pages.isEmpty) {
+      pages.add(0);
     }
 
     final List<List<Map<String, dynamic>>> pagesContent = [];
@@ -330,14 +408,42 @@ class _MainPageState extends State<MainPage> {
       }
     }
 
-    if (posts.length < 5) {
+    if (posts.length < maxPosts) {
       throw Exception("Not enough posts found in the blog: $sourceBlog");
     }
 
+    final summaryClient = ChatOpenAI(
+      apiKey: "lmstudio",
+      baseUrl: "http://localhost:1234/v1",
+      defaultOptions: ChatOpenAIOptions(
+        model: (await prefs.getString(uiModel))!,
+        temperature: 0
+      )
+    );
+
+    final RunnableSequence<InputValues, String> summarizeChain =
+      ChatPromptTemplate.fromTemplates(const [
+        (
+          ChatMessageType.system,
+          """
+  Leggi il post ed estrai 3 parole chiave che riassumono al meglio il testo.
+  Separa le parole chiave con delle virgole.
+  Non aggiungere altro.
+  """,
+        ),
+        (ChatMessageType.human, "{post}"),
+      ]).pipe(summaryClient).pipe(const StringOutputParser());
+
+    final List<String> results = await summarizeChain.batch(
+      posts.values.map((post) => {
+        "post": post,
+      }
+    ).toList());
+
+    summaryClient.close();
+
     var tries = 5;
     while (tries-- > 0) {
-      final client = OllamaClient();
-
       setState(() {
         _runningMessage = "🧠 Calling LLM (trying ${5 - tries}/5) ...";
       });
@@ -353,42 +459,52 @@ class _MainPageState extends State<MainPage> {
         mood = moods[Random().nextInt(moods.length)];
       }
       mood = mood.toLowerCase();
-      final String model = (await prefs.getString(uiModel))!;
       final int start = DateTime.now().millisecondsSinceEpoch ~/ 1000;
       final double stTemp = (await prefs.getDouble(uiModelTemperature))!;
-      final double temp = (stTemp < 0 ? Random().nextInt(10) : stTemp) / 10;
+      final double temp =
+          (stTemp < 0 ? Random().nextInt(10) : stTemp) / 10 + 1.0;
       final double stTopP = (await prefs.getDouble(uiModelTopP))!;
       final double topP = (stTopP < 0 ? Random().nextInt(10) : stTopP) / 10;
-      final Stream<GenerateChatCompletionResponse> stream = client
-          .generateChatCompletionStream(
-            request: GenerateChatCompletionRequest(
-              model: model,
-              messages: [
-                Message(
-                  role: MessageRole.system,
-                  content:
-                      """
-Sei uno scrittore creativo con un tono $mood. Ti verranno forniti dei post tratti da un blog.
 
-- Scrivi un nuovo post originale, imitando lo stile di scrittura e il modo di ragionare dei post del blog.
-- Assicurati che il contenuto tratti temi coerenti e pertinenti rispetto a quelli presenti nei post del blog.
-- Mantieni la struttura tipica dei post originali, evitando di copiarne frasi o passaggi.
-- Racchiudi il tuo post tra i tag <output> e </output>
-""",
-                ),
-                Message(
-                  role: MessageRole.user,
-                  content: 'Questi sono i post:\n\n${postsText.join('\n\n')}',
-                ),
-              ],
-              options: RequestOptions(temperature: temp, topP: topP),
-            ),
-          );
+      final writerClient = ChatOpenAI(
+        apiKey: "lmstudio",
+        baseUrl: "http://localhost:1234/v1",
+        defaultOptions: ChatOpenAIOptions(
+          model: (await prefs.getString(uiModel))!,
+          temperature: temp,
+          topP: topP
+        )
+      );
+
+      final RunnableSequence<InputValues, String> writerChain =
+        ChatPromptTemplate.fromTemplates([
+          (
+            ChatMessageType.human,
+            "{keywords}"
+          ),
+          (
+            ChatMessageType.system,
+            """
+  Sei uno scrittore creativo con un umore $mood.
+
+  - Scrivi un nuovo post originale, utilizzando le parole chiave come soggetti del post.
+  - Puoi anche non usare tutte le parole chiave, seleziona a tuo piacimento quelle che più ti ispirano.
+  - Non usare filtri, sii spontaneo, creativo e autentico.
+  - Scrivi UNICAMENTE AL MASCHILE.
+  - Deve contenere almeno 300 parole.
+  - RACCHIUDI SEMPRE il tuo post tra i tag <output> e </output>
+  """
+          ),
+        ]).pipe(writerClient).pipe(const StringOutputParser());
+
+      final Stream<String> stream = writerChain.stream({
+        "keywords": results.join("\n")
+      });
+
       var llmOutput = StringBuffer();
       await for (final res in stream) {
-        final String str = res.message.content;
-        _logController.append(str);
-        llmOutput.write(str);
+        _logController.append(res);
+        llmOutput.write(res);
       }
 
       final regex = RegExp("<output>(.*?)</output>", dotAll: true);
@@ -429,11 +545,11 @@ Sei uno scrittore creativo con un tono $mood. Ti verranno forniti dei post tratt
       }
 
       int elapsed = DateTime.now().millisecondsSinceEpoch ~/ 1000 - start;
-      final Map<String, Object> postObj = {
+      _postObj = {
         "content": tumblrPost,
         "tags": [
           "umore: $mood",
-          "modello: $model",
+          "modello: ${writerClient.defaultOptions.model}",
           "durata: ${elapsed}s",
           "temperatura: ${temp.toStringAsFixed(1)}",
           "top_p: ${topP.toStringAsFixed(1)}",
@@ -441,22 +557,34 @@ Sei uno scrittore creativo con un tono $mood. Ti verranno forniti dei post tratt
       };
 
       _logController.append(
-        "\n\n${const JsonEncoder.withIndent(' ').convert(postObj)}",
+        "\n\n${const JsonEncoder.withIndent(' ').convert(_postObj)}",
       );
 
       if ((await prefs.getString(uiDryRun))! == "false") {
-        setState(() {
-          _runningMessage = "📨 Posting to Tumblr ...";
-        });
-
-        await _tumblrClient.post(
-          "/blog/${(await prefs.getString(uiTargetBlog))!}/posts",
-          body: postObj,
-        );
+        await _publishPost();
       }
 
-      client.endSession();
+      writerClient.close();
       break;
     }
+  }
+
+  Future<void> _publishPost() async {
+    if (_postObj.isEmpty) {
+      return;
+    }
+
+    final prefs = SharedPreferencesAsync();
+
+    setState(() {
+      _runningMessage = "📨 Posting to Tumblr ...";
+    });
+
+    await _tumblrClient.post(
+      "/blog/${(await prefs.getString(uiTargetBlog))!}/posts",
+      body: _postObj,
+    );
+
+    _postObj = {};
   }
 }

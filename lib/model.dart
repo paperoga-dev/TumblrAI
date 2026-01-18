@@ -4,7 +4,7 @@ import "package:flutter/material.dart";
 import "package:main/constants.dart";
 import "package:main/ui/listview.dart";
 import "package:main/ui/slider.dart";
-import "package:ollama_dart/ollama_dart.dart";
+import "package:openai_dart/openai_dart.dart";
 
 class ModelWidget extends StatefulWidget {
   const ModelWidget({super.key});
@@ -23,11 +23,12 @@ class _ModelWidgetState extends State<ModelWidget> {
     super.initState();
 
     unawaited(
-      OllamaClient().listModels().then(
+      OpenAIClient(
+        apiKey: "",
+        baseUrl: "http://localhost:1234/v1",
+      ).listModels().then(
         (modelsResp) {
-          _models.complete(
-            modelsResp.models!.map((item) => item.model!).toList(),
-          );
+          _models.complete(modelsResp.data.map((item) => item.id).toList());
         },
         onError: (err) {
           _models.completeError(err);

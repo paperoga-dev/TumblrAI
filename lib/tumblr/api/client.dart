@@ -89,9 +89,37 @@ class Client {
     });
   }
 
+  Map<String, dynamic> _deepMerge(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) {
+    final result = Map<String, dynamic>.from(a);
+
+    b.forEach((key, value) {
+      if (result.containsKey(key)) {
+        final dynamic existing = result[key];
+        if (existing is Map && value is Map) {
+          result[key] = _deepMerge(
+            existing as Map<String, dynamic>,
+            value as Map<String, dynamic>,
+          );
+        } else if (existing is List && value is List) {
+          result[key] = [...existing, ...value];
+        } else {
+          result[key] = value;
+        }
+      } else {
+        result[key] = value;
+      }
+    });
+
+    return result;
+  }
+
   Future<Map<String, dynamic>> get(
     String path, {
     Map<String, String>? queryParameters,
+    bool recursive = false,
   }) async {
     final Uri uri = _makeUri(path, queryParameters: queryParameters);
 
@@ -114,7 +142,29 @@ class Client {
         {
           final String body = response.body;
           debugPrint("GET, body = $body");
-          return json.decode(body)["response"];
+          final Map<String, dynamic> jsonBody = json.decode(body);
+
+          Map<String, dynamic> userData = jsonBody["response"];
+
+          if (recursive &&
+              userData.containsKey("_links") &&
+              userData["_links"].containsKey("next") &&
+              userData["_links"]["next"].containsKey("query_params")) {
+            final Map<String, String> headers =
+                (userData["_links"]["next"]["query_params"]
+                        as Map<String, dynamic>)
+                    .map((k, v) => MapEntry(k, v.toString()))
+                  ..remove("prev_offsets");
+            await Future.delayed(const Duration(seconds: 1));
+            userData = _deepMerge(
+              userData,
+              await get(path, queryParameters: headers),
+            );
+          }
+
+          userData.remove("_links");
+
+          return userData;
         }
 
       case 401:
