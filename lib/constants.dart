@@ -101,7 +101,6 @@ const uiMaxPosts = "UI_MAX_POSTS";
 const uiMinLength = "UI_MIN_LENGTH";
 const uiMaxLength = "UI_MAX_LENGTH";
 const uiModelTemperature = "UI_MODEL_TEMPERATURE_INDEX";
-const uiModelTopP = "UI_MODEL_TOP_P_INDEX";
 const uiDryRun = "UI_DRY_RUN";
 const uiSourceBlog = "UI_SOURCE_BLOG";
 const uiTargetBlog = "UI_TARGET_BLOG";

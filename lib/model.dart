@@ -63,8 +63,7 @@ class _ModelWidgetState extends State<ModelWidget> {
                   const ExSlider(
                     labelText: "Temperature:",
                     prefKey: uiModelTemperature,
-                  ),
-                  const ExSlider(labelText: "Top_P:", prefKey: uiModelTopP),
+                  )
                 ],
               ),
             ),

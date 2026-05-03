@@ -349,13 +349,12 @@ class _MainPageState extends State<MainPage> {
     final links = <String, String>{};
 
     var inPageIndex = 0;
-    int maxPosts = (await prefs.getInt(uiMaxPosts))!;
     int minLength = (await prefs.getInt(uiMinLength))!;
     int maxLength = (await prefs.getInt(uiMaxLength))!;
 
-    while (posts.length < maxPosts) {
+    while (true) {
       setState(() {
-        _runningMessage = "📡 Fetched ${posts.length} / $maxPosts posts ...";
+        _runningMessage = "📡 Fetching a post from Tumblr ...";
       });
 
       List<Map<String, dynamic>> sourcePosts = [];
@@ -405,18 +404,15 @@ class _MainPageState extends State<MainPage> {
       if (text.length > minLength && text.length < maxLength) {
         posts[json["id_string"]] = text;
         links[json["id_string"]] = json["post_url"];
+        break;
       }
-    }
-
-    if (posts.length < maxPosts) {
-      throw Exception("Not enough posts found in the blog: $sourceBlog");
     }
 
     final summaryClient = ChatOpenAI(
       apiKey: "lmstudio",
       baseUrl: "http://localhost:1234/v1",
       defaultOptions: ChatOpenAIOptions(
-        model: (await prefs.getString(uiModel))!,
+        model: await prefs.getString(uiModel),
         temperature: 0
       )
     );
@@ -426,8 +422,7 @@ class _MainPageState extends State<MainPage> {
         (
           ChatMessageType.system,
           """
-  Leggi il post ed estrai 3 parole chiave che riassumono al meglio il testo.
-  Separa le parole chiave con delle virgole.
+  Leggi il post e riassumine il contenuto in maniera dettagliata.
   Non aggiungere altro.
   """,
         ),
@@ -449,11 +444,6 @@ class _MainPageState extends State<MainPage> {
       });
 
       _logController.clear();
-      var postIndex = 1;
-      final List<String> postsText = posts.values
-          .map((post) => "POST ${postIndex++}:\n$post")
-          .toList()
-          .cast<String>();
       String mood = (await prefs.getString(uiMood))!;
       if (mood == autoMood) {
         mood = moods[Random().nextInt(moods.length)];
@@ -463,16 +453,14 @@ class _MainPageState extends State<MainPage> {
       final double stTemp = (await prefs.getDouble(uiModelTemperature))!;
       final double temp =
           (stTemp < 0 ? Random().nextInt(10) : stTemp) / 10 + 1.0;
-      final double stTopP = (await prefs.getDouble(uiModelTopP))!;
-      final double topP = (stTopP < 0 ? Random().nextInt(10) : stTopP) / 10;
 
       final writerClient = ChatOpenAI(
         apiKey: "lmstudio",
         baseUrl: "http://localhost:1234/v1",
         defaultOptions: ChatOpenAIOptions(
-          model: (await prefs.getString(uiModel))!,
+          model: await prefs.getString(uiModel),
           temperature: temp,
-          topP: topP
+          topP: 1
         )
       );
 
@@ -487,8 +475,7 @@ class _MainPageState extends State<MainPage> {
             """
   Sei uno scrittore creativo con un umore $mood.
 
-  - Scrivi un nuovo post originale, utilizzando le parole chiave come soggetti del post.
-  - Puoi anche non usare tutte le parole chiave, seleziona a tuo piacimento quelle che più ti ispirano.
+  - Scrivi un nuovo post originale, utilizzando l'argomento fornito.
   - Non usare filtri, sii spontaneo, creativo e autentico.
   - Scrivi UNICAMENTE AL MASCHILE.
   - Deve contenere almeno 300 parole.
@@ -498,7 +485,7 @@ class _MainPageState extends State<MainPage> {
         ]).pipe(writerClient).pipe(const StringOutputParser());
 
       final Stream<String> stream = writerChain.stream({
-        "keywords": results.join("\n")
+        "keywords": results[0]
       });
 
       var llmOutput = StringBuffer();
@@ -527,6 +514,7 @@ class _MainPageState extends State<MainPage> {
           .map<Map<String, Object>>((line) => {"type": "text", "text": line})
           .toList();
 
+      /*
       var llmPostIndex = 0;
       for (final String key in posts.keys) {
         final linkText = "[${++llmPostIndex}] $key";
@@ -543,6 +531,7 @@ class _MainPageState extends State<MainPage> {
           ],
         });
       }
+      */
 
       int elapsed = DateTime.now().millisecondsSinceEpoch ~/ 1000 - start;
       _postObj = {
@@ -551,8 +540,7 @@ class _MainPageState extends State<MainPage> {
           "umore: $mood",
           "modello: ${writerClient.defaultOptions.model}",
           "durata: ${elapsed}s",
-          "temperatura: ${temp.toStringAsFixed(1)}",
-          "top_p: ${topP.toStringAsFixed(1)}",
+          "temperatura: ${temp.toStringAsFixed(1)}"
         ].join(","),
       };
 
