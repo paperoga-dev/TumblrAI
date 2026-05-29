@@ -74,7 +74,11 @@ class _ExTextOutputState extends State<ExTextOutput> {
         labelText: widget.labelText,
         alignLabelWithHint: true,
       ),
-      style: const TextStyle(fontFamily: "Courier New", fontSize: 12),
+      style: const TextStyle(
+        fontFamily: "Courier New",
+        fontWeight: FontWeight.bold,
+        fontSize: 20,
+      ),
     ),
   );
 

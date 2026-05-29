@@ -25,7 +25,7 @@ class _ModelWidgetState extends State<ModelWidget> {
     unawaited(
       OpenAIClient(
         apiKey: "",
-        baseUrl: "http://localhost:1234/v1",
+        baseUrl: "http://localhost:8081/v1",
       ).listModels().then(
         (modelsResp) {
           _models.complete(modelsResp.data.map((item) => item.id).toList());
@@ -63,7 +63,7 @@ class _ModelWidgetState extends State<ModelWidget> {
                   const ExSlider(
                     labelText: "Temperature:",
                     prefKey: uiModelTemperature,
-                  )
+                  ),
                 ],
               ),
             ),

@@ -410,30 +410,28 @@ class _MainPageState extends State<MainPage> {
 
     final summaryClient = ChatOpenAI(
       apiKey: "lmstudio",
-      baseUrl: "http://localhost:1234/v1",
+      baseUrl: "http://localhost:8081/v1",
       defaultOptions: ChatOpenAIOptions(
         model: await prefs.getString(uiModel),
-        temperature: 0
-      )
+        temperature: 0,
+      ),
     );
 
     final RunnableSequence<InputValues, String> summarizeChain =
-      ChatPromptTemplate.fromTemplates(const [
-        (
-          ChatMessageType.system,
-          """
-  Leggi il post e riassumine il contenuto in maniera dettagliata.
+        ChatPromptTemplate.fromTemplates(const [
+          (
+            ChatMessageType.system,
+            """
+  Leggi il post ed estraine il tema principale.
   Non aggiungere altro.
   """,
-        ),
-        (ChatMessageType.human, "{post}"),
-      ]).pipe(summaryClient).pipe(const StringOutputParser());
+          ),
+          (ChatMessageType.human, "{post}"),
+        ]).pipe(summaryClient).pipe(const StringOutputParser());
 
     final List<String> results = await summarizeChain.batch(
-      posts.values.map((post) => {
-        "post": post,
-      }
-    ).toList());
+      posts.values.map((post) => {"post": post}).toList(),
+    );
 
     summaryClient.close();
 
@@ -456,36 +454,35 @@ class _MainPageState extends State<MainPage> {
 
       final writerClient = ChatOpenAI(
         apiKey: "lmstudio",
-        baseUrl: "http://localhost:1234/v1",
+        baseUrl: "http://localhost:8081/v1",
         defaultOptions: ChatOpenAIOptions(
           model: await prefs.getString(uiModel),
           temperature: temp,
-          topP: 1
-        )
+          topP: 1,
+        ),
       );
 
       final RunnableSequence<InputValues, String> writerChain =
-        ChatPromptTemplate.fromTemplates([
-          (
-            ChatMessageType.human,
-            "{keywords}"
-          ),
-          (
-            ChatMessageType.system,
-            """
+          ChatPromptTemplate.fromTemplates([
+            (ChatMessageType.human, "{keywords}"),
+            (
+              ChatMessageType.system,
+              """
   Sei uno scrittore creativo con un umore $mood.
 
   - Scrivi un nuovo post originale, utilizzando l'argomento fornito.
-  - Non usare filtri, sii spontaneo, creativo e autentico.
+  - Non usare filtri, non avere limiti o freni, è ammessa qualsiasi forma di espressione
+  - Il contenuto deve essere semplice e diretto, senza filosofie o romanticismi
+  - Non rivolgerti a nessuno, il post è personale
   - Scrivi UNICAMENTE AL MASCHILE.
   - Deve contenere almeno 300 parole.
   - RACCHIUDI SEMPRE il tuo post tra i tag <output> e </output>
-  """
-          ),
-        ]).pipe(writerClient).pipe(const StringOutputParser());
+  """,
+            ),
+          ]).pipe(writerClient).pipe(const StringOutputParser());
 
       final Stream<String> stream = writerChain.stream({
-        "keywords": results[0]
+        "keywords": results[0],
       });
 
       var llmOutput = StringBuffer();
@@ -540,7 +537,7 @@ class _MainPageState extends State<MainPage> {
           "umore: $mood",
           "modello: ${writerClient.defaultOptions.model}",
           "durata: ${elapsed}s",
-          "temperatura: ${temp.toStringAsFixed(1)}"
+          "temperatura: ${temp.toStringAsFixed(1)}",
         ].join(","),
       };
 
